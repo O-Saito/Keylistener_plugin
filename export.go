@@ -91,7 +91,9 @@ func plugin_start() {
 	keyEvtCh = make(chan queuedKeyEv, 256)
 	downKeys = make(map[uint32]struct{})
 	startProcessor()
-	startHook(onKeyEvent)
+	if err := startHook(onKeyEvent); err != nil {
+		hostLog(3, "keylistener: failed to start evdev hook: %v", err)
+	}
 }
 
 //export plugin_stop

@@ -13,6 +13,12 @@ import (
 
 const sizeofInputEvent = 24
 
+const KEY_MAX = 0x2ff
+
+func eviocgbit(ev, size int) uintptr {
+	return uintptr(2<<30) | uintptr('E'<<8) | uintptr(0x20+ev) | uintptr(size<<16)
+}
+
 type inputEvent struct {
 	Sec   int64
 	Usec  int64
@@ -101,17 +107,17 @@ func stopHook() {
 
 func isKeyboard(fd int) bool {
 	var evBits [(unix.EV_CNT + 63) / 64]uint64
-	cmd := unix.EVIOCGBIT(0, len(evBits)*8)
-	if _, _, err := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(cmd), uintptr(unsafe.Pointer(&evBits))); err != 0 {
+	cmd := eviocgbit(0, len(evBits)*8)
+	if _, _, err := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&evBits))); err != 0 {
 		return false
 	}
 	if evBits[unix.EV_KEY/64]&(1<<(unix.EV_KEY%64)) == 0 {
 		return false
 	}
 
-	var keyBits [(unix.KEY_MAX + 63) / 64]uint64
-	cmd = unix.EVIOCGBIT(unix.EV_KEY, len(keyBits)*8)
-	if _, _, err := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(cmd), uintptr(unsafe.Pointer(&keyBits))); err != 0 {
+	var keyBits [(KEY_MAX + 63) / 64]uint64
+	cmd = eviocgbit(unix.EV_KEY, len(keyBits)*8)
+	if _, _, err := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), cmd, uintptr(unsafe.Pointer(&keyBits))); err != 0 {
 		return false
 	}
 	const keyQ = 16

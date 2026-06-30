@@ -1,6 +1,9 @@
 package main
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 type Plugin struct {
 	subscribers map[string]struct{}
@@ -40,9 +43,14 @@ func onKeyEvent(vkCode uint32, flags uint32, wParam uintptr) {
 		downKeysMu.Unlock()
 	}
 
+	vkName := ev.VkName
+	if strings.HasPrefix(vkName, "KEY_") || strings.HasPrefix(vkName, "VK_") {
+		vkName = vkName[4:]
+	}
+
 	evMap := map[string]any{
 		"vk_code": ev.VkCode,
-		"vk_name": ev.VkName,
+		"vk_name": vkName,
 		"key":     ev.Key,
 		"is_down": ev.IsDown,
 		"modifiers": map[string]any{

@@ -4,6 +4,14 @@ package main
 
 import "fmt"
 
+type KeyEvent struct {
+	VkCode    uint32          `json:"vk_code"`
+	VkName    string          `json:"vk_name"`
+	Key       string          `json:"key"`
+	IsDown    bool            `json:"is_down"`
+	Modifiers map[string]bool `json:"modifiers"`
+}
+
 const (
 	KEY_RESERVED     = 0
 	KEY_ESC          = 1
