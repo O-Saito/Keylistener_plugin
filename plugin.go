@@ -13,12 +13,34 @@ var p = &Plugin{
 	subscribers: make(map[string]struct{}),
 }
 
-func onKeyEvent(vkCode uint32, flags uint32, wParam uintptr) {
-	if wParam != WM_KEYDOWN && wParam != WM_SYSKEYDOWN {
-		return
-	}
+type queuedKeyEv struct {
+	evMap map[string]any
+}
 
+var (
+	keyEvtCh      chan queuedKeyEv
+	downKeys      map[uint32]struct{}
+	downKeysMu    sync.Mutex
+	processorStop chan struct{}
+	processorDone chan struct{}
+)
+
+func onKeyEvent(vkCode uint32, flags uint32, wParam uintptr) {
 	ev := buildKeyEvent(vkCode, wParam)
+
+	if ev.IsDown {
+		downKeysMu.Lock()
+		if _, held := downKeys[vkCode]; held {
+			downKeysMu.Unlock()
+			return
+		}
+		downKeys[vkCode] = struct{}{}
+		downKeysMu.Unlock()
+	} else {
+		downKeysMu.Lock()
+		delete(downKeys, vkCode)
+		downKeysMu.Unlock()
+	}
 
 	evMap := map[string]any{
 		"vk_code": ev.VkCode,
@@ -33,14 +55,41 @@ func onKeyEvent(vkCode uint32, flags uint32, wParam uintptr) {
 		},
 	}
 
-	p.mu.RLock()
-	modules := make([]string, 0, len(p.subscribers))
-	for m := range p.subscribers {
-		modules = append(modules, m)
+	select {
+	case keyEvtCh <- queuedKeyEv{evMap}:
+	default:
 	}
-	p.mu.RUnlock()
+}
 
-	for _, module := range modules {
-		hostEmitEvent("keypress", evMap, module)
+func startProcessor() {
+	processorStop = make(chan struct{})
+	processorDone = make(chan struct{})
+
+	go func() {
+		defer close(processorDone)
+		for {
+			select {
+			case <-processorStop:
+				return
+			case qe := <-keyEvtCh:
+				p.mu.RLock()
+				modules := make([]string, 0, len(p.subscribers))
+				for m := range p.subscribers {
+					modules = append(modules, m)
+				}
+				p.mu.RUnlock()
+
+				for _, module := range modules {
+					hostEmitEvent("keypress", qe.evMap, module)
+				}
+			}
+		}
+	}()
+}
+
+func stopProcessor() {
+	if processorStop != nil {
+		close(processorStop)
+		<-processorDone
 	}
 }

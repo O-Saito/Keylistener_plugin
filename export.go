@@ -90,12 +90,16 @@ func plugin_init(configJSON *C.char) *C.char {
 
 //export plugin_start
 func plugin_start() {
+	keyEvtCh = make(chan queuedKeyEv, 256)
+	downKeys = make(map[uint32]struct{})
+	startProcessor()
 	startHook(onKeyEvent)
 }
 
 //export plugin_stop
 func plugin_stop() {
 	stopHook()
+	stopProcessor()
 	p.mu.Lock()
 	p.subscribers = make(map[string]struct{})
 	p.mu.Unlock()
@@ -117,19 +121,24 @@ func plugin_call_action(name, argsJSON *C.char) *C.char {
 
 	switch goName {
 	case "listen":
-		if goArgs == "" {
+		var moduleName string
+		if err := json.Unmarshal([]byte(goArgs), &moduleName); err != nil || moduleName == "" {
 			return nil
 		}
 		p.mu.Lock()
-		p.subscribers[goArgs] = struct{}{}
+		p.subscribers[moduleName] = struct{}{}
 		p.mu.Unlock()
-		hostLog(0, "%s subscribed to key events", goArgs)
+		hostLog(0, "%s subscribed to key events", moduleName)
 		return nil
 	case "stop_listen":
+		var moduleName string
+		if err := json.Unmarshal([]byte(goArgs), &moduleName); err != nil || moduleName == "" {
+			return nil
+		}
 		p.mu.Lock()
-		delete(p.subscribers, goArgs)
+		delete(p.subscribers, moduleName)
 		p.mu.Unlock()
-		hostLog(0, "%s unsubscribed from key events", goArgs)
+		hostLog(0, "%s unsubscribed from key events", moduleName)
 		return nil
 	default:
 		return nil
