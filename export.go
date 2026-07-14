@@ -91,6 +91,9 @@ func plugin_start() {
 	keyEvtCh = make(chan queuedKeyEv, 256)
 	downKeys = make(map[uint32]struct{})
 	startProcessor()
+	gamepadEvtCh = make(chan queuedGamepadEv, 64)
+	gamepadSubs = make(map[string]struct{})
+	startGamepadProcessor()
 	if err := startHook(onKeyEvent); err != nil {
 		hostLog(3, "keylistener: failed to start evdev hook: %v", err)
 	}
@@ -100,9 +103,13 @@ func plugin_start() {
 func plugin_stop() {
 	stopHook()
 	stopProcessor()
+	stopGamepadProcessor()
 	p.mu.Lock()
 	p.subscribers = make(map[string]struct{})
 	p.mu.Unlock()
+	gamepadSubsMu.Lock()
+	gamepadSubs = make(map[string]struct{})
+	gamepadSubsMu.Unlock()
 }
 
 //export plugin_get_actions
@@ -110,6 +117,8 @@ func plugin_get_actions() *C.char {
 	actions, _ := json.Marshal([]map[string]string{
 		{"name": "listen"},
 		{"name": "stop_listen"},
+		{"name": "listen_controller"},
+		{"name": "stop_listen_controller"},
 	})
 	return C.CString(string(actions))
 }
@@ -139,6 +148,26 @@ func plugin_call_action(name, jsonArgs, meta *C.char) *C.char {
 		delete(p.subscribers, moduleName)
 		p.mu.Unlock()
 		hostLog(0, "%s unsubscribed from key events", moduleName)
+		return nil
+	case "listen_controller":
+		var moduleName string
+		if err := json.Unmarshal([]byte(goArgs), &moduleName); err != nil || moduleName == "" {
+			return nil
+		}
+		gamepadSubsMu.Lock()
+		gamepadSubs[moduleName] = struct{}{}
+		gamepadSubsMu.Unlock()
+		hostLog(0, "%s subscribed to gamepad events", moduleName)
+		return nil
+	case "stop_listen_controller":
+		var moduleName string
+		if err := json.Unmarshal([]byte(goArgs), &moduleName); err != nil || moduleName == "" {
+			return nil
+		}
+		gamepadSubsMu.Lock()
+		delete(gamepadSubs, moduleName)
+		gamepadSubsMu.Unlock()
+		hostLog(0, "%s unsubscribed from gamepad events", moduleName)
 		return nil
 	default:
 		return nil

@@ -27,13 +27,27 @@ type inputEvent struct {
 	Value int32
 }
 
+type deviceInfo struct {
+	fd        int
+	isGamepad bool
+}
+
 var (
-	hookFds    []int
+	devices    []deviceInfo
 	epollFd    int
 	hookDone   chan struct{}
 	keyHandler func(vkCode uint32, flags uint32, wParam uintptr)
 	hookMu     sync.Mutex
 )
+
+func isGamepadFD(fd int) bool {
+	for _, d := range devices {
+		if d.fd == fd {
+			return d.isGamepad
+		}
+	}
+	return false
+}
 
 func startHook(handler func(vkCode uint32, flags uint32, wParam uintptr)) error {
 	hookMu.Lock()
@@ -53,13 +67,15 @@ func startHook(handler func(vkCode uint32, flags uint32, wParam uintptr)) error 
 		return fmt.Errorf("evdev: epoll_create1: %w", err)
 	}
 
-	var fds []int
+	var devs []deviceInfo
 	for _, dev := range matches {
 		fd, err := unix.Open(dev, unix.O_RDONLY|unix.O_NONBLOCK, 0)
 		if err != nil {
 			continue
 		}
-		if !isKeyboard(fd) {
+		isKB := isKeyboard(fd)
+		isGP := isGamepad(fd)
+		if !isKB && !isGP {
 			unix.Close(fd)
 			continue
 		}
@@ -68,16 +84,17 @@ func startHook(handler func(vkCode uint32, flags uint32, wParam uintptr)) error 
 			unix.Close(fd)
 			continue
 		}
-		fds = append(fds, fd)
+		devs = append(devs, deviceInfo{fd, isGP})
 	}
-	if len(fds) == 0 {
+	if len(devs) == 0 {
 		unix.Close(epfd)
-		return fmt.Errorf("evdev: no keyboard devices found (user in 'input' group?)")
+		return fmt.Errorf("evdev: no input devices found (user in 'input' group?)")
 	}
 
 	epollFd = epfd
-	hookFds = fds
+	devices = devs
 	keyHandler = handler
+	initGamepadStates()
 
 	done := make(chan struct{})
 	hookDone = done
@@ -93,16 +110,17 @@ func stopHook() {
 		unix.Close(epollFd)
 		epollFd = 0
 	}
-	for _, fd := range hookFds {
-		unix.Close(fd)
+	for _, d := range devices {
+		unix.Close(d.fd)
 	}
-	hookFds = nil
+	devices = nil
 
 	if hookDone != nil {
 		<-hookDone
 		hookDone = nil
 	}
 	keyHandler = nil
+	clearGamepadStates()
 }
 
 func isKeyboard(fd int) bool {
@@ -150,20 +168,35 @@ func eventLoop(done chan struct{}) {
 				if err != nil || m < sizeofInputEvent {
 					break
 				}
-				if ev.Type != 0x01 {
-					continue
-				}
-				if ev.Value == 2 {
-					continue
-				}
-				updateModifiers(ev.Code, ev.Value)
 
-				hookMu.Lock()
-				h := keyHandler
-				hookMu.Unlock()
+				switch ev.Type {
+				case 0x01: // EV_KEY
+					if ev.Value == 2 {
+						continue
+					}
+					if isGamepadCode(ev.Code) {
+						updateGamepadButton(fd, ev.Code, ev.Value)
+						continue
+					}
+					updateModifiers(ev.Code, ev.Value)
 
-				if h != nil {
-					h(uint32(ev.Code), 0, uintptr(ev.Value))
+					hookMu.Lock()
+					h := keyHandler
+					hookMu.Unlock()
+
+					if h != nil {
+						h(uint32(ev.Code), 0, uintptr(ev.Value))
+					}
+
+				case 0x03: // EV_ABS
+					updateGamepadAxis(fd, ev.Code, ev.Value)
+
+				case 0x00: // EV_SYN
+					if isGamepadFD(fd) {
+						emitGamepadIfChanged(fd)
+					}
+
+				default:
 				}
 			}
 		}

@@ -26,6 +26,18 @@ var (
 	processorDone chan struct{}
 )
 
+type queuedGamepadEv struct {
+	evMap map[string]any
+}
+
+var (
+	gamepadEvtCh          chan queuedGamepadEv
+	gamepadSubs           map[string]struct{}
+	gamepadSubsMu         sync.RWMutex
+	gamepadProcessorStop  chan struct{}
+	gamepadProcessorDone  chan struct{}
+)
+
 func onKeyEvent(vkCode uint32, flags uint32, wParam uintptr) {
 	ev := buildKeyEvent(vkCode, wParam)
 
@@ -97,5 +109,54 @@ func stopProcessor() {
 	if processorStop != nil {
 		close(processorStop)
 		<-processorDone
+	}
+}
+
+func queueGamepadEvent(data map[string]any) {
+	if gamepadSubs == nil || gamepadEvtCh == nil {
+		return
+	}
+	gamepadSubsMu.RLock()
+	hasSubs := len(gamepadSubs) > 0
+	gamepadSubsMu.RUnlock()
+	if !hasSubs {
+		return
+	}
+	select {
+	case gamepadEvtCh <- queuedGamepadEv{data}:
+	default:
+	}
+}
+
+func startGamepadProcessor() {
+	gamepadProcessorStop = make(chan struct{})
+	gamepadProcessorDone = make(chan struct{})
+
+	go func() {
+		defer close(gamepadProcessorDone)
+		for {
+			select {
+			case <-gamepadProcessorStop:
+				return
+			case qe := <-gamepadEvtCh:
+				gamepadSubsMu.RLock()
+				modules := make([]string, 0, len(gamepadSubs))
+				for m := range gamepadSubs {
+					modules = append(modules, m)
+				}
+				gamepadSubsMu.RUnlock()
+
+				for _, module := range modules {
+					hostEmitEvent("gamepad", qe.evMap, module)
+				}
+			}
+		}
+	}()
+}
+
+func stopGamepadProcessor() {
+	if gamepadProcessorStop != nil {
+		close(gamepadProcessorStop)
+		<-gamepadProcessorDone
 	}
 }
