@@ -64,7 +64,7 @@ func plugin_name() *C.char {
 
 //export plugin_api_version
 func plugin_api_version() C.uint32_t {
-	return 0x00010000
+	return 0x00020000
 }
 
 //export plugin_set_host
@@ -115,9 +115,9 @@ func plugin_get_actions() *C.char {
 }
 
 //export plugin_call_action
-func plugin_call_action(name, argsJSON *C.char) *C.char {
+func plugin_call_action(name, jsonArgs, meta *C.char) *C.char {
 	goName := C.GoString(name)
-	goArgs := C.GoString(argsJSON)
+	goArgs := C.GoString(jsonArgs)
 
 	switch goName {
 	case "listen":

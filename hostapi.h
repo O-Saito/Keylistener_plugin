@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define MYSTREAM_BOT_API_VERSION 0x00010000
+#define MYSTREAM_BOT_API_VERSION 0x00020000
 
 typedef struct bot_host_api_s {
 	uint32_t api_version;
