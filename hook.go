@@ -20,7 +20,10 @@ var (
 	procCallNextHookEx      = user32.NewProc("CallNextHookEx")
 	procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
 	procGetMessage          = user32.NewProc("GetMessageW")
+	procTranslateMessage    = user32.NewProc("TranslateMessage")
+	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
 	procGetKeyState         = user32.NewProc("GetKeyState")
+	procPostMessageW        = user32.NewProc("PostMessageW")
 	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
 	procGetCurrentThreadId  = kernel32.NewProc("GetCurrentThreadId")
 )
@@ -92,6 +95,12 @@ func startHook(handler func(vkCode uint32, flags uint32, wParam uintptr)) error 
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 
+		// Initialize raw input window for gamepad (best-effort)
+		gpHwnd, gpErr := initRawInput()
+		if gpErr != nil {
+			hostLog(2, "keylistener: rawinput init failed, gamepad unavailable: %v", gpErr)
+		}
+
 		done := make(chan struct{})
 		defer close(done)
 
@@ -102,6 +111,9 @@ func startHook(handler func(vkCode uint32, flags uint32, wParam uintptr)) error 
 			0,
 		)
 		if h == 0 {
+			if gpHwnd != 0 {
+				cleanupRawInput()
+			}
 			ready <- fmt.Errorf("SetWindowsHookEx failed")
 			return
 		}
@@ -123,8 +135,13 @@ func startHook(handler func(vkCode uint32, flags uint32, wParam uintptr)) error 
 			if ret == 0 {
 				break
 			}
+			procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
+			procDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 		}
 
+		if gpHwnd != 0 {
+			cleanupRawInput()
+		}
 		hookHandle = 0
 		hookThreadID = 0
 	}()
@@ -141,7 +158,12 @@ func stopHook() {
 	if h != 0 {
 		procUnhookWindowsHookEx.Call(h)
 	}
-	if tid != 0 {
+
+	// Post WM_CLOSE to the raw input hidden window if available;
+	// falls back to PostThreadMessageW with WM_QUIT.
+	if rawInputHWND != 0 {
+		procPostMessageW.Call(rawInputHWND, WM_CLOSE, 0, 0)
+	} else if tid != 0 {
 		procPostThreadMessageW.Call(tid, WM_QUIT, 0, 0)
 	}
 

@@ -95,7 +95,7 @@ func plugin_start() {
 	gamepadSubs = make(map[string]struct{})
 	startGamepadProcessor()
 	if err := startHook(onKeyEvent); err != nil {
-		hostLog(3, "keylistener: failed to start evdev hook: %v", err)
+		hostLog(3, "keylistener: failed to start keyboard hook: %v", err)
 	}
 }
 
